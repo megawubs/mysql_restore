@@ -1,15 +1,19 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
+	"compress/gzip"
+	"database/sql"
+	"flag"
 	"fmt"
 	_ "github.com/go-sql-driver/mysql"
-	"database/sql"
-	"os"
-	"bufio"
-	"log"
+	"io"
 	"io/ioutil"
+	"log"
+	"os"
 	"os/exec"
-	"flag"
+	"path/filepath"
 )
 
 func main() {
@@ -26,13 +30,24 @@ func main() {
 		database = getDatabase(password)
 	}
 
+	b, err := ioutil.ReadFile(*fileToImport)
+	var reader io.Reader = bytes.NewReader(b)
 	fmt.Printf("Going to import %s into %s\n", *fileToImport, *database)
-	command := fmt.Sprintf("mysql -u root -p'%s' -h 127.0.0.1 %s < %s", password, *database, *fileToImport)
+	command := fmt.Sprintf("mysql -u root -p'%s' -h 127.0.0.1 %s", password, *database)
 	cmd := exec.Command("sh", "-c", command)
+	cmd.Stdin = reader
 	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
-	err := cmd.Run()
+	if filepath.Ext(*fileToImport) == ".gz" {
+		var err error
+		reader, err = gzip.NewReader(reader)
+		if err != nil {
+			fmt.Errorf("error occoured while creating gzip reader, %s", err)
+		}
+		cmd.Stdin = reader
+	}
+
+	err = cmd.Run()
 
 	if err != nil {
 		fmt.Errorf("error while runnin import command, %s", err)
@@ -41,7 +56,7 @@ func main() {
 
 }
 
-func getDatabase(password string) (*string) {
+func getDatabase(password string) *string {
 	dataSource := fmt.Sprintf("root:%s@tcp(127.0.0.1:3306)/", password)
 	db, err := sql.Open("mysql", dataSource)
 	defer db.Close()
@@ -79,7 +94,7 @@ func getDatabase(password string) (*string) {
 	return &database
 }
 
-func getFileToImport(baseDir string) (*string) {
+func getFileToImport(baseDir string) *string {
 	files, err := ioutil.ReadDir(baseDir)
 	if err != nil {
 		fmt.Errorf("someting went wrong %s", err)
@@ -96,11 +111,10 @@ func getFileToImport(baseDir string) (*string) {
 }
 func createDatabase(db *sql.DB, d string) {
 
-	res, err := db.Exec("CREATE DATABASE " + d + " CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
+	_, err := db.Exec("CREATE DATABASE " + d + " CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
 	if err != nil {
 		fmt.Errorf("error while creating new database, %s", err)
 	}
-	fmt.Print(res)
 	fmt.Printf("database '%s' created", d)
 }
 
